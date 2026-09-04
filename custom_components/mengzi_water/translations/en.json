@@ -3,17 +3,19 @@
     "step": {
       "user": {
         "title": "Configure Mengzi Water",
-        "description": "Paste the session Cookie from the online service hall (after WeChat login, capture any request header via a proxy and copy the Cookie value starting with Ares.Core.Session.JXSWPHALL=).\n\nThe cookie is stored only in this HA instance.",
+        "description": "Paste the session Cookie from the online service hall (after WeChat login, capture any request header via a proxy and copy the Cookie value starting with Ares.Core.Session.JXSWPHALL=).\n\nThe cookie is stored only in this HA instance.\n\n\n\nopenId: capture the HallEx.Login request and take its first Params value.",
         "data": {
           "session_cookie": "Session Cookie",
-          "name": "Name (optional)"
+          "name": "Name (optional)",
+          "open_id": "WeChat openId (optional, for auto re-login)"
         }
       },
       "reauth_confirm": {
         "title": "Re-authenticate",
         "description": "Session expired. Capture a fresh Cookie and paste it here.",
         "data": {
-          "session_cookie": "Session Cookie"
+          "session_cookie": "Session Cookie",
+          "open_id": "WeChat openId (optional, for auto re-login)"
         }
       }
     },
@@ -40,18 +42,42 @@
   },
   "entity": {
     "sensor": {
-      "balance": { "name": "Prepaid balance" },
-      "arrears": { "name": "Total arrears" },
-      "pending_bills": { "name": "Unpaid bills" },
-      "last_payment_time": { "name": "Last payment time" },
-      "stop_status": { "name": "Water supply status" },
-      "customer_no": { "name": "Customer number" },
-      "customer_name": { "name": "Customer name" },
-      "address": { "name": "Address" },
-      "meter_count": { "name": "Meters" },
-      "water_use_type": { "name": "Water use type" },
-      "book_name": { "name": "Book" },
-      "last_update": { "name": "Last update" }
+      "balance": {
+        "name": "Prepaid balance"
+      },
+      "arrears": {
+        "name": "Total arrears"
+      },
+      "pending_bills": {
+        "name": "Unpaid bills"
+      },
+      "last_payment_time": {
+        "name": "Last payment time"
+      },
+      "stop_status": {
+        "name": "Water supply status"
+      },
+      "customer_no": {
+        "name": "Customer number"
+      },
+      "customer_name": {
+        "name": "Customer name"
+      },
+      "address": {
+        "name": "Address"
+      },
+      "meter_count": {
+        "name": "Meters"
+      },
+      "water_use_type": {
+        "name": "Water use type"
+      },
+      "book_name": {
+        "name": "Book"
+      },
+      "last_update": {
+        "name": "Last update"
+      }
     }
   }
 }

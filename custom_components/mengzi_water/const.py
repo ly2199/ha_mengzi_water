@@ -5,6 +5,7 @@ DOMAIN = "mengzi_water"
 
 # 配置项
 CONF_COOKIE = "session_cookie"       # 网上营业厅会话 Cookie(Ares.Core.Session.JXSWPHALL=...)
+CONF_OPENID = "open_id"              # 微信 openId(可选,用于会话过期自动重新登录)
 CONF_SCAN_INTERVAL = "scan_interval" # 轮询间隔(秒)
 CONF_NAME = "name"                   # 可选名称
 

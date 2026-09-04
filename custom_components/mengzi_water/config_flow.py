@@ -11,13 +11,19 @@ from homeassistant.const import CONF_NAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import CONF_COOKIE, DOMAIN
+from .const import CONF_COOKIE, CONF_NAME, CONF_OPENID, DOMAIN
 from .water_api import AuthExpired, MengziWaterApi, MengziWaterError
 
 _LOGGER = logging.getLogger(__name__)
 
+OPEN_ID_HINT = (
+    "openId 获取方法(选填,用于 Cookie 过期后自动重登):手机微信打开营业厅并完成登录后,"
+    "用抓包代理找到 Fun=HallEx.Login 的请求,其 Params 第一个参数值即为 openId。"
+)
+
 SCHEMA_USER = vol.Schema({
     vol.Required(CONF_COOKIE): str,
+    vol.Optional(CONF_OPENID, default=""): str,
     vol.Optional(CONF_NAME, default=""): str,
 })
 
@@ -70,7 +76,10 @@ class MengziWaterConfigFlow(ConfigFlow, domain=DOMAIN):
                 title = user_input.get(CONF_NAME) or f"蒙自城镇供水 {info}"
                 await self.async_set_unique_id(f"{DOMAIN}-{title}")
                 self._abort_if_unique_id_configured()
-                return self.async_create_entry(title=title, data={CONF_COOKIE: cookie})
+                data = {CONF_COOKIE: cookie}
+                if user_input.get(CONF_OPENID):
+                    data[CONF_OPENID] = str(user_input[CONF_OPENID]).strip()
+                return self.async_create_entry(title=title, data=data)
 
         return self.async_show_form(
             step_id="user",
@@ -91,6 +100,9 @@ class MengziWaterConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reauth_entry()
         if user_input is not None:
             cookie = _normalize_cookie(user_input[CONF_COOKIE])
+            openid = str(user_input.get(CONF_OPENID) or "").strip() or str(
+                entry.data.get(CONF_OPENID) or ""
+            ).strip()
             try:
                 await _validate(self.hass, cookie)
             except InvalidAuth:
@@ -98,15 +110,24 @@ class MengziWaterConfigFlow(ConfigFlow, domain=DOMAIN):
             except CannotConnect:
                 errors["base"] = "cannot_connect"
             else:
-                self.hass.config_entries.async_update_entry(
-                    entry, data={**entry.data, CONF_COOKIE: cookie}
-                )
+                data = {**entry.data, CONF_COOKIE: cookie}
+                if openid:
+                    data[CONF_OPENID] = openid
+                else:
+                    data.pop(CONF_OPENID, None)
+                self.hass.config_entries.async_update_entry(entry, data=data)
                 await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
 
-        schema = vol.Schema({vol.Required(CONF_COOKIE): str})
+        schema = vol.Schema({
+            vol.Required(CONF_COOKIE): str,
+            vol.Optional(CONF_OPENID, default=str(entry.data.get(CONF_OPENID) or "")): str,
+        })
         return self.async_show_form(
-            step_id="reauth_confirm", data_schema=schema, errors=errors
+            step_id="reauth_confirm",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"openid_hint": OPEN_ID_HINT},
         )
 
     @staticmethod
