@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
@@ -177,9 +177,6 @@ class MengziWaterSensor(CoordinatorEntity[MengziWaterCoordinator], SensorEntity)
             attrs["户名"] = h.customer_name
         if h.address:
             attrs["地址"] = h.address
-        if self.coordinator.last_update_success:
-            attrs["下次更新"] = (self.coordinator.last_update_success_time
-                                + (self.coordinator.update_interval or timedelta(0)))
         return attrs
 
     @property
