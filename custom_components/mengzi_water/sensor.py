@@ -18,7 +18,7 @@ from .water_api import Household
 
 _LOGGER = logging.getLogger(__name__)
 
-# key: (device_class, unit) —— 展示名由 translations/entity.sensor.<key>.name 提供
+# key: (device_class, unit) —— 展示名由代码内 NAME_* 提供(不依赖翻译解析,兼容性更好)
 META: dict[str, tuple[SensorDeviceClass | None, str | None]] = {
     "balance":           (SensorDeviceClass.MONETARY, "CNY"),
     "arrears":           (SensorDeviceClass.MONETARY, "CNY"),
@@ -32,6 +32,36 @@ META: dict[str, tuple[SensorDeviceClass | None, str | None]] = {
     "water_use_type":    (None, None),
     "book_name":         (None, None),
     "last_update":       (SensorDeviceClass.TIMESTAMP, None),
+}
+
+NAME_ZH = {
+    "balance": "预存金额",
+    "arrears": "待缴欠费合计",
+    "pending_bills": "待缴账单数",
+    "last_payment_time": "最近缴费时间",
+    "stop_status": "供水状态",
+    "customer_no": "户号",
+    "customer_name": "户名",
+    "address": "用址",
+    "meter_count": "水表数",
+    "water_use_type": "用水类型",
+    "book_name": "册名",
+    "last_update": "最近更新",
+}
+
+NAME_EN = {
+    "balance": "Prepaid balance",
+    "arrears": "Total arrears",
+    "pending_bills": "Unpaid bills",
+    "last_payment_time": "Last payment time",
+    "stop_status": "Water supply status",
+    "customer_no": "Customer number",
+    "customer_name": "Customer name",
+    "address": "Address",
+    "meter_count": "Meters",
+    "water_use_type": "Water use type",
+    "book_name": "Book",
+    "last_update": "Last update",
 }
 
 _DIAGNOSTIC_KEYS = {
@@ -96,9 +126,20 @@ class MengziWaterSensor(CoordinatorEntity[MengziWaterCoordinator], SensorEntity)
         self._attr_unique_id = f"{DOMAIN}_{account_key}_{key}"
         # 确定性英文 entity_id,避免中文/重名导致重复后缀
         self.entity_id = f"sensor.mengzi_water_{safe_no}_{key}"
-        self._attr_translation_key = key
+        # 实体显示名:显式按 HA 界面语言给出,不依赖翻译文件加载
+        self._attr_name = self._localized_name(coordinator, key)
         if key in _DIAGNOSTIC_KEYS:
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @staticmethod
+    def _localized_name(coordinator: MengziWaterCoordinator, key: str) -> str:
+        lang = ""
+        try:
+            lang = str(coordinator.hass.config.language or "")
+        except Exception:  # noqa: BLE001
+            lang = ""
+        names = NAME_ZH if lang.lower().startswith("zh") else NAME_EN
+        return names.get(key, key)
 
     # ------------------------------------------------------------------
     @property
