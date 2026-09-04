@@ -13,10 +13,11 @@ from .protocol import (
     AuthExpired,
     Household,
     MengziWaterError,
+    RT_SESSION_OUT,
+    RT_SUCCESS,
     apply_payload,
     build_payload,
     build_query,
-    check_return_data,
     extract_relations,
     page_param,
     parse_article,
@@ -47,7 +48,14 @@ class MengziWaterApi:
         self._timeout = timeout
 
     # ------------------------------------------------------------------
-    async def _post(self, queries: list[dict]) -> dict:
+    async def _post(self, queries: list[dict], _attempts: int = 3) -> dict:
+        """POST 并校验响应。
+
+        服务端偶发会短暂返回“会话失效(ReturnType=2)”或空响应,
+        而 Cookie 实际仍有效 —— 因此先重试,连续多次确认后才判为会话失效。
+        """
+        import asyncio
+
         payload = build_payload(queries)
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -57,22 +65,37 @@ class MengziWaterApi:
             "User-Agent": ("Mozilla/5.0 (Linux; Android 16; wv) AppleWebKit/537.36 "
                            "(KHTML, like Gecko) Mobile MicroMessenger/8.0.77"),
         }
-        try:
-            resp = await self._session.post(
-                API_BASE_URL, data=payload, headers=headers, timeout=self._timeout
-            )
-            text = await resp.text()
-        except Exception as err:  # noqa: BLE001
-            raise MengziWaterError(f"网络请求失败: {err}") from err
-
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as err:
-            raise MengziWaterError(f"响应解析失败(HTTP {resp.status})") from err
-
-        rd = data.get("ReturnData") or {}
-        check_return_data(rd)
-        return rd
+        last_err: Exception | None = None
+        for attempt in range(1, _attempts + 1):
+            try:
+                resp = await self._session.post(
+                    API_BASE_URL, data=payload, headers=headers, timeout=self._timeout
+                )
+                text = await resp.text()
+                data = json.loads(text)
+                rd = data.get("ReturnData") or {}
+            except json.JSONDecodeError:
+                last_err = MengziWaterError(f"响应解析失败(HTTP {getattr(resp, 'status', '?')})")
+            except Exception as err:  # noqa: BLE001
+                last_err = MengziWaterError(f"网络请求失败: {err}")
+            else:
+                ret = rd.get("ReturnType")
+                if ret == RT_SUCCESS:
+                    return rd
+                msg = rd.get("ReturnString") or f"接口返回异常(ReturnType={ret})"
+                if ret == RT_SESSION_OUT:
+                    if attempt < _attempts:
+                        _LOGGER.warning(
+                            "供水服务端第 %s 次返回会话失效(可能为瞬时误报),稍后重试: %s",
+                            attempt, msg,
+                        )
+                    else:
+                        raise AuthExpired(msg)
+                else:
+                    last_err = MengziWaterError(msg)
+            if attempt < _attempts:
+                await asyncio.sleep(1.0)
+        raise last_err or MengziWaterError("未知请求错误")
 
     # ------------------------------------------------------------------
     async def validate_session(self) -> str:
