@@ -20,3 +20,6 @@ COMPANY_NAME = "蒙自市城镇供水有限责任公司"
 
 # 水价公示文章 ID(网上营业厅公告)
 ARTICLE_ID = "e870ee37-e2c4-454a-addd-5fa33b148abb"
+
+# 会话保活:openId 报到间隔(秒),默认 50 分钟(服务端会话约数小时失效)
+KEEPALIVE_INTERVAL = 3000

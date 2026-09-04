@@ -17,6 +17,7 @@ from .const import (
     CONF_SCAN_INTERVAL,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    KEEPALIVE_INTERVAL,
 )
 from .water_api import AuthExpired, Household, MengziWaterApi, MengziWaterError
 
@@ -26,7 +27,7 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
 class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
-    """轮询所有绑定户号数据(基础+欠费+账单统计),并自动续期会话。"""
+    """轮询所有绑定户号数据,并用 openId 定时保活会话(可选)。"""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, api: MengziWaterApi) -> None:
         interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -41,6 +42,7 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
         self._options_snapshot = dict(entry.options)
         self.price_standard: dict = {}
         self._renewed_in_cycle = False
+        self._last_keepalive_ts = 0.0
 
     @property
     def api(self) -> MengziWaterApi:
@@ -66,34 +68,51 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
             self._entry, data={**self._entry.data, CONF_COOKIE: cookie}
         )
 
-    async def _try_renew_with_openid(self) -> bool:
-        """openId 重新登录换取新会话;成功则立即重试拉取。"""
+    async def _keepalive(self) -> bool:
+        """用 openId 调登录接口刷新服务端活跃状态(保活)。"""
+        import time as _time
+
         open_id = self.open_id
-        if not open_id or self._renewed_in_cycle:
+        if not open_id:
             return False
-        _LOGGER.info("检测到会话失效,尝试用 openId 自动重新登录")
-        new_cookie = await self._api.renew_session_with_openid(open_id)
-        if not new_cookie:
-            return False
-        await self._persist_cookie(new_cookie)
-        self._renewed_in_cycle = True
-        return True
+        ok = await self._api.renew_session_with_openid(open_id)
+        if ok:
+            self._last_keepalive_ts = _time.time()
+            self._renewed_in_cycle = True
+        return ok
+
+    async def _maybe_keepalive(self) -> None:
+        """周期保活:距离上次保活超过阈值则主动报到(默认 50 分钟)。"""
+        import time as _time
+
+        if not self.open_id or self._renewed_in_cycle:
+            return
+        if _time.time() - self._last_keepalive_ts >= KEEPALIVE_INTERVAL:
+            if not await self._keepalive():
+                _LOGGER.warning("周期保活失败(将尝试正常拉取,失败再触发重登)")
 
     async def _async_update_data(self) -> dict[str, Household]:
+        import time as _time
+
         self._renewed_in_cycle = False
+        if not self._last_keepalive_ts:
+            self._last_keepalive_ts = _time.time()
+
+        await self._maybe_keepalive()
         try:
             households = await self._api.fetch_all()
         except AuthExpired:
-            if await self._try_renew_with_openid():
+            # 拉取确认为会话失效:先保活一次再重试
+            if await self._keepalive():
                 try:
                     households = await self._api.fetch_all()
                 except AuthExpired as err:
                     raise ConfigEntryAuthFailed(
-                        f"会话失效且 openId 重新登录后仍失败: {err}"
+                        f"会话失效且 openId 保活后仍失败: {err}"
                     ) from err
             else:
                 raise ConfigEntryAuthFailed(
-                    "会话失效:请重新抓取 Cookie;如已配置 openId 将自动续期"
+                    "会话失效:请检查 openId 是否正确;未配置 openId 时请重新抓取 Cookie"
                 )
         except MengziWaterError as err:
             raise UpdateFailed(str(err)) from err
@@ -101,15 +120,15 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
         try:
             price = await self._api.fetch_price_standard()
         except AuthExpired:
-            if await self._try_renew_with_openid():
+            if await self._keepalive():
                 try:
                     price = await self._api.fetch_price_standard()
                 except AuthExpired as err:
                     raise ConfigEntryAuthFailed(
-                        f"会话失效且 openId 重新登录后仍失败: {err}"
+                        f"会话失效且 openId 保活后仍失败: {err}"
                     ) from err
             else:
-                raise ConfigEntryAuthFailed("会话失效:请重新抓取 Cookie")
+                raise ConfigEntryAuthFailed("会话失效:请重新抓取 Cookie 或检查 openId")
         self.price_standard = price
 
         result: dict[str, Household] = {}

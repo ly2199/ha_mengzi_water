@@ -136,12 +136,12 @@ class MengziWaterApi:
         raise last_err or MengziWaterError("未知请求错误")
 
     # ------------------------------------------------------------------
-    async def renew_session_with_openid(self, open_id: str) -> str | None:
-        """用微信 openId 重新登录,返回服务端新签发的会话 Cookie。
+    async def renew_session_with_openid(self, open_id: str) -> bool:
+        """用微信 openId 调登录接口刷新服务端活跃状态。
 
-        微信 H5 的实际登录接口即 HallEx.Login(openId);服务端会在响应头
-        Set-Cookie 中签发新会话。返回 None 表示未取得新 Cookie。
-        """
+        实测:会话 Cookie 是固定值,服务端按“最近一次登录/活跃”判定会话是否有效,
+        微信端每次打开营业厅都会自动调用本接口。HA 定期调用即可等效保活,
+        无需微信在线。返回 True 表示登录接口成功(无论是否回发新 Cookie)。"""
         try:
             resp = await self._session.post(
                 API_BASE_URL,
@@ -158,25 +158,25 @@ class MengziWaterApi:
             )
             text = await resp.text()
         except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("openId 重新登录请求失败: %s", err)
-            return None
+            _LOGGER.warning("openId 保活请求失败: %s", err)
+            return False
 
         new_cookie = extract_session_cookie(resp.headers.getall("Set-Cookie", []))
         if new_cookie:
             self._cookie = new_cookie
-            _LOGGER.info("openId 重新登录成功,已取得新会话 Cookie")
-            return new_cookie
-        # 服务端可能把新 Cookie 放进 body 或未签发: 记录响应便于排查
-        _LOGGER.debug("openId 登录响应未包含 Set-Cookie: %.300s", text)
+            _LOGGER.info("openId 保活成功且服务端轮换了会话 Cookie")
         try:
-            rd = json.loads(text).get("ReturnData") or {}
-            if rd.get("ReturnType") == RT_SUCCESS:
-                _LOGGER.warning(
-                    "openId 登录接口返回成功但未签发新 Cookie,请更新插件或改用手动续期"
-                )
+            data = json.loads(text)
+            rd = data.get("ReturnData") or {}
         except json.JSONDecodeError:
-            pass
-        return None
+            _LOGGER.warning("openId 保活响应无法解析")
+            return False
+        if rd.get("ReturnType") == RT_SUCCESS:
+            _LOGGER.debug("openId 保活成功(ReturnType=1)")
+            return True
+        _LOGGER.warning("openId 保活未成功: ReturnType=%s %s",
+                        rd.get("ReturnType"), rd.get("ReturnString"))
+        return False
 
     async def validate_session(self) -> str:
         """校验会话,返回默认户号显示信息(配置向导用)。"""
