@@ -1,12 +1,14 @@
 """蒙自供水网上营业厅异步客户端(只读轮询)。"""
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import API_BASE_URL
+from .const import API_BASE_URL, ARTICLE_ID
 from .protocol import (
     AuthExpired,
     Household,
@@ -16,9 +18,15 @@ from .protocol import (
     build_query,
     check_return_data,
     extract_relations,
+    page_param,
+    parse_article,
+    single_param,
+    QRY_ARTICLE,
     QRY_BILLS,
     QRY_BASE,
     QRY_CUSTOMER,
+    QRY_HIST0,
+    QRY_HIST1,
     QRY_NEEDPAY,
     QRY_RELATIONS,
     QRY_SWITCH,
@@ -32,7 +40,7 @@ __all__ = ["MengziWaterApi", "MengziWaterError", "AuthExpired", "Household"]
 class MengziWaterApi:
     """与蒙自城镇供水网上营业厅交互的只读客户端。"""
 
-    def __init__(self, hass, session_cookie: str, timeout: int = 20) -> None:
+    def __init__(self, hass, session_cookie: str, timeout: int = 25) -> None:
         self._hass = hass
         self._session = async_get_clientsession(hass)
         self._cookie = session_cookie.strip()
@@ -57,8 +65,6 @@ class MengziWaterApi:
         except Exception as err:  # noqa: BLE001
             raise MengziWaterError(f"网络请求失败: {err}") from err
 
-        import json
-
         try:
             data = json.loads(text)
         except json.JSONDecodeError as err:
@@ -79,12 +85,25 @@ class MengziWaterApi:
             return f"{name}(户号 {no})"
         return "会话有效"
 
+    async def fetch_price_standard(self) -> dict:
+        """拉取水价公示文章(失败返回空结构,不影响主流程)。"""
+        try:
+            rd = await self._post([
+                build_query(QRY_ARTICLE, "HallEx.GetArticleDetail",
+                            [single_param(ARTICLE_ID)])
+            ])
+            return parse_article(rd)
+        except AuthExpired:
+            raise
+        except MengziWaterError as err:
+            _LOGGER.warning("拉取水价公示失败: %s", err)
+            return {"title": "水价公示", "lines": []}
+
     async def fetch_all(self) -> list[Household]:
-        """拉取全部绑定户号。每户号一次 RPC(切换+客户信息+欠费汇总+待缴账单+档案)。"""
+        """拉取全部绑定户号:基础信息 + 欠费 + 当年/上一年历史账单。"""
         rd = await self._post([build_query(QRY_RELATIONS, "Hall.GetRelations")])
         households = extract_relations(rd)
         if not households:
-            # 关系列表为空时保底:取当前默认户号
             rd = await self._post([build_query(QRY_CUSTOMER, "Hall.GetCustomerInfo")])
             data = (rd.get(QRY_CUSTOMER) or {}).get("Data") or {}
             if data.get("customerNo"):
@@ -96,15 +115,22 @@ class MengziWaterApi:
                 return [h]
             return []
 
+        now = datetime.now()
+        years = [str(now.year), str(now.year - 1)]
         result: list[Household] = []
         for h in households:
             try:
                 rd = await self._post([
-                    build_query(QRY_SWITCH, "Hall.SwitchCustom", [h.customer_id]),
+                    build_query(QRY_SWITCH, "Hall.SwitchCustom",
+                                [single_param(h.customer_id)]),
                     build_query(QRY_CUSTOMER, "Hall.GetCustomerInfo"),
                     build_query(QRY_NEEDPAY, "Hall.GetNeedPayInfo"),
                     build_query(QRY_BILLS, "Hall.GetNoPayBillRecordList"),
                     build_query(QRY_BASE, "Hall.GetCustomerBaseInfo"),
+                    build_query(QRY_HIST0, "Hall.GetBillRecordListByPage",
+                                [page_param(), single_param(years[0])]),
+                    build_query(QRY_HIST1, "Hall.GetBillRecordListByPage",
+                                [page_param(), single_param(years[1])]),
                 ])
                 apply_payload(h, rd)
             except AuthExpired:

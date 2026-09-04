@@ -7,7 +7,6 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -18,20 +17,22 @@ from .water_api import Household
 
 _LOGGER = logging.getLogger(__name__)
 
-# key: (device_class, unit) —— 展示名由代码内 NAME_* 提供(不依赖翻译解析,兼容性更好)
+# 每户号实体: key -> (device_class, unit)
 META: dict[str, tuple[SensorDeviceClass | None, str | None]] = {
     "balance":           (SensorDeviceClass.MONETARY, "CNY"),
     "arrears":           (SensorDeviceClass.MONETARY, "CNY"),
     "pending_bills":     (None, "笔"),
     "last_payment_time": (SensorDeviceClass.TIMESTAMP, None),
     "stop_status":       (None, None),
-    "customer_no":       (None, None),
-    "customer_name":     (None, None),
-    "address":           (None, None),
-    "meter_count":       (None, "块"),
-    "water_use_type":    (None, None),
-    "book_name":         (None, None),
-    "last_update":       (SensorDeviceClass.TIMESTAMP, None),
+    # 账单统计
+    "usage_month":       (SensorDeviceClass.VOLUME, "m³"),
+    "usage_quarter":     (SensorDeviceClass.VOLUME, "m³"),
+    "usage_year":        (SensorDeviceClass.VOLUME, "m³"),
+    "cost_month":        (SensorDeviceClass.MONETARY, "CNY"),
+    "cost_quarter":      (SensorDeviceClass.MONETARY, "CNY"),
+    "cost_year":         (SensorDeviceClass.MONETARY, "CNY"),
+    "last_bill_usage":   (SensorDeviceClass.VOLUME, "m³"),
+    "last_bill_cost":    (SensorDeviceClass.MONETARY, "CNY"),
 }
 
 NAME_ZH = {
@@ -40,13 +41,15 @@ NAME_ZH = {
     "pending_bills": "待缴账单数",
     "last_payment_time": "最近缴费时间",
     "stop_status": "供水状态",
-    "customer_no": "户号",
-    "customer_name": "户名",
-    "address": "用址",
-    "meter_count": "水表数",
-    "water_use_type": "用水类型",
-    "book_name": "册名",
-    "last_update": "最近更新",
+    "usage_month": "本月用水量",
+    "usage_quarter": "本季用水量",
+    "usage_year": "本年用水量",
+    "cost_month": "本月水费",
+    "cost_quarter": "本季水费",
+    "cost_year": "本年水费",
+    "last_bill_usage": "最近一期用水量",
+    "last_bill_cost": "最近一期水费",
+    "price_standard": "水价标准",
 }
 
 NAME_EN = {
@@ -55,18 +58,15 @@ NAME_EN = {
     "pending_bills": "Unpaid bills",
     "last_payment_time": "Last payment time",
     "stop_status": "Water supply status",
-    "customer_no": "Customer number",
-    "customer_name": "Customer name",
-    "address": "Address",
-    "meter_count": "Meters",
-    "water_use_type": "Water use type",
-    "book_name": "Book",
-    "last_update": "Last update",
-}
-
-_DIAGNOSTIC_KEYS = {
-    "customer_no", "customer_name", "address", "meter_count",
-    "water_use_type", "book_name", "last_update",
+    "usage_month": "Usage this month",
+    "usage_quarter": "Usage this quarter",
+    "usage_year": "Usage this year",
+    "cost_month": "Cost this month",
+    "cost_quarter": "Cost this quarter",
+    "cost_year": "Cost this year",
+    "last_bill_usage": "Latest bill usage",
+    "last_bill_cost": "Latest bill cost",
+    "price_standard": "Water price standard",
 }
 
 ICONS = {
@@ -75,13 +75,15 @@ ICONS = {
     "pending_bills": "mdi:file-document-alert-outline",
     "last_payment_time": "mdi:clock-outline",
     "stop_status": "mdi:pipe",
-    "customer_no": "mdi:card-account-details-outline",
-    "customer_name": "mdi:account-outline",
-    "address": "mdi:map-marker-outline",
-    "meter_count": "mdi:counter",
-    "water_use_type": "mdi:water-outline",
-    "book_name": "mdi:book-outline",
-    "last_update": "mdi:update",
+    "usage_month": "mdi:water-outline",
+    "usage_quarter": "mdi:chart-line",
+    "usage_year": "mdi:chart-bar",
+    "cost_month": "mdi:currency-cny",
+    "cost_quarter": "mdi:chart-line",
+    "cost_year": "mdi:chart-bar",
+    "last_bill_usage": "mdi:counter",
+    "last_bill_cost": "mdi:receipt-text-outline",
+    "price_standard": "mdi:scale-balance",
 }
 
 
@@ -106,13 +108,6 @@ def _parse_dt(value: str | None) -> datetime | None:
     return dt
 
 
-def _stop_flag(h: Household) -> bool:
-    try:
-        return int(h.raw.get("Customer", {}).get("Data", {}).get("isStop", 0)) == 1
-    except (TypeError, ValueError, AttributeError):
-        return False
-
-
 class MengziWaterSensor(CoordinatorEntity[MengziWaterCoordinator], SensorEntity):
     """一个户号下的一个只读传感器。"""
 
@@ -124,22 +119,8 @@ class MengziWaterSensor(CoordinatorEntity[MengziWaterCoordinator], SensorEntity)
         self._account_key = account_key
         safe_no = "".join(ch for ch in str(account_key) if ch.isalnum()) or "acc"
         self._attr_unique_id = f"{DOMAIN}_{account_key}_{key}"
-        # 确定性英文 entity_id,避免中文/重名导致重复后缀
         self.entity_id = f"sensor.mengzi_water_{safe_no}_{key}"
-        # 实体显示名:显式按 HA 界面语言给出,不依赖翻译文件加载
-        self._attr_name = self._localized_name(coordinator, key)
-        if key in _DIAGNOSTIC_KEYS:
-            self._attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    @staticmethod
-    def _localized_name(coordinator: MengziWaterCoordinator, key: str) -> str:
-        lang = ""
-        try:
-            lang = str(coordinator.hass.config.language or "")
-        except Exception:  # noqa: BLE001
-            lang = ""
-        names = NAME_ZH if lang.lower().startswith("zh") else NAME_EN
-        return names.get(key, key)
+        self._attr_name = _localized_name(coordinator, key)
 
     # ------------------------------------------------------------------
     @property
@@ -189,21 +170,23 @@ class MengziWaterSensor(CoordinatorEntity[MengziWaterCoordinator], SensorEntity)
         if self._key == "last_payment_time":
             return _parse_dt(h.last_payment_time)
         if self._key == "stop_status":
-            return h.stop_status or ("停水" if _stop_flag(h) else "正常")
-        if self._key == "customer_no":
-            return h.customer_no
-        if self._key == "customer_name":
-            return h.customer_name
-        if self._key == "address":
-            return h.address
-        if self._key == "meter_count":
-            return h.meter_count
-        if self._key == "water_use_type":
-            return h.water_use_type
-        if self._key == "book_name":
-            return h.book_name
-        if self._key == "last_update":
-            return datetime.now().astimezone()
+            return h.stop_status
+        if self._key == "usage_month":
+            return h.usage_month
+        if self._key == "usage_quarter":
+            return h.usage_quarter
+        if self._key == "usage_year":
+            return h.usage_year
+        if self._key == "cost_month":
+            return h.cost_month
+        if self._key == "cost_quarter":
+            return h.cost_quarter
+        if self._key == "cost_year":
+            return h.cost_year
+        if self._key == "last_bill_usage":
+            return h.last_bill.usage if h.last_bill else None
+        if self._key == "last_bill_cost":
+            return h.last_bill.money if h.last_bill else None
         return None
 
     @property
@@ -217,12 +200,82 @@ class MengziWaterSensor(CoordinatorEntity[MengziWaterCoordinator], SensorEntity)
         if h.customer_name:
             attrs["户名"] = h.customer_name
         if h.address:
-            attrs["地址"] = h.address
+            attrs["用址"] = h.address
+        if h.book_name:
+            attrs["册名"] = h.book_name
+        if h.water_use_type:
+            attrs["用水类型"] = h.water_use_type
+        if h.meter_count:
+            attrs["水表数"] = h.meter_count
+        attrs["更新时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if self._key.startswith(("usage_", "cost_", "last_bill_")) and h.last_bill:
+            b = h.last_bill
+            attrs["最近账单期"] = b.period
+            attrs["最近账单总金额"] = b.money
+            attrs["最近账单分解"] = (
+                f"水费 {b.water_money} / 污水 {b.sewage_charges} / "
+                f"垃圾 {b.waste_disposal_fee} / 滞纳金 {b.penalty}"
+            )
+            if b.last_record and b.current_record:
+                attrs["表码"] = f"{b.last_record} → {b.current_record}"
+            if b.finish_time:
+                attrs["最近缴费"] = b.finish_time
+        if self._key.startswith("usage_") and h.bills:
+            recent = []
+            for bill in h.bills[:12]:
+                recent.append(bill.as_attr())
+            attrs["近12期账单"] = recent
         return attrs
 
     @property
     def suggested_display_precision(self) -> int | None:
-        return 2 if self._key in ("balance", "arrears") else None
+        if self._key in (
+            "balance", "arrears", "cost_month", "cost_quarter", "cost_year",
+            "last_bill_cost",
+        ):
+            return 2
+        if self._key in ("usage_month", "usage_quarter", "usage_year", "last_bill_usage"):
+            return 1
+        return None
+
+
+class MengziWaterPriceSensor(CoordinatorEntity[MengziWaterCoordinator], SensorEntity):
+    """水价标准(公示文章),不隶属于某个户号设备。"""
+
+    _attr_should_poll = False
+
+    def __init__(self, coordinator: MengziWaterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_price_standard"
+        self.entity_id = f"sensor.{DOMAIN}_price_standard"
+        self._attr_name = _localized_name(coordinator, "price_standard")
+        self._attr_icon = ICONS["price_standard"]
+
+    @property
+    def native_value(self) -> str | None:
+        info = self.coordinator.price_standard
+        return info.get("title") if info else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        info = self.coordinator.price_standard or {}
+        lines = info.get("lines") or []
+        attrs: dict[str, Any] = {}
+        if lines:
+            attrs["公示内容"] = lines
+        attrs["更新时间"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return attrs
+
+
+def _localized_name(coordinator: MengziWaterCoordinator, key: str) -> str:
+    lang = ""
+    try:
+        lang = str(coordinator.hass.config.language or "")
+    except Exception:  # noqa: BLE001
+        lang = ""
+    names = NAME_ZH if lang.lower().startswith("zh") else NAME_EN
+    return names.get(key, key)
 
 
 async def async_setup_entry(
@@ -232,13 +285,15 @@ async def async_setup_entry(
 ) -> None:
     coordinator: MengziWaterCoordinator = hass.data[DOMAIN][entry.entry_id]
     accounts = list(coordinator.data.keys())
-    entities = [
+    entities: list[SensorEntity] = [
         MengziWaterSensor(coordinator, key, acc)
         for acc in accounts
         for key in META
     ]
+    if accounts:
+        entities.append(MengziWaterPriceSensor(coordinator))
     if not entities:
         _LOGGER.warning(
-            "mengzi_water: 没有获取到可用户号数据，请检查会话 Cookie 是否有效、是否已绑定户号"
+            "mengzi_water: 没有获取到可用户号数据,请检查会话 Cookie 是否有效、是否已绑定户号"
         )
     async_add_entities(entities)

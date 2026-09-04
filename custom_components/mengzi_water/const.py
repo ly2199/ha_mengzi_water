@@ -16,3 +16,6 @@ MIN_SCAN_INTERVAL = 300              # 最短 5 分钟
 API_BASE_URL = "https://swp.mzczgs.com/Hall/"
 COOKIE_NAME = "Ares.Core.Session.JXSWPHALL"
 COMPANY_NAME = "蒙自市城镇供水有限责任公司"
+
+# 水价公示文章 ID(网上营业厅公告)
+ARTICLE_ID = "e870ee37-e2c4-454a-addd-5fa33b148abb"
