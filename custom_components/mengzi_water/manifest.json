@@ -1,0 +1,19 @@
+{
+  "domain": "mengzi_water",
+  "name": "蒙自城镇供水 (Mengzi Water)",
+  "codeowners": [
+    "@ly2199"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/ly2199/ha_mengzi_water",
+  "issue_tracker": "https://github.com/ly2199/ha_mengzi_water/issues",
+  "icon": "mdi:water",
+  "iot_class": "cloud_polling",
+  "loggers": [
+    "custom_components.mengzi_water"
+  ],
+  "requirements": [],
+  "dependencies": [],
+  "version": "1.0.0",
+  "zeroconf": []
+}

@@ -1,0 +1,57 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "配置蒙自城镇供水",
+        "description": "粘贴网上营业厅登录会话 Cookie（可选填一个备注名称）。\n\n获取方法：手机微信打开 https://swp.mzczgs.com/Hall/ 完成登录后，通过抓包代理（mitmproxy/Charles 等）抓任意一个请求，复制请求头中的 Cookie 值（以 Ares.Core.Session.JXSWPHALL= 开头）。\n\nCookie 仅保存在本机 HA 配置中，不会上传到任何第三方。",
+        "data": {
+          "session_cookie": "会话 Cookie",
+          "name": "名称（可选）"
+        }
+      },
+      "reauth_confirm": {
+        "title": "重新认证",
+        "description": "会话已失效，请重新抓取最新的 Cookie 粘贴到这里。",
+        "data": {
+          "session_cookie": "会话 Cookie"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "会话无效或已过期，请重新抓取 Cookie",
+      "cannot_connect": "无法连接服务器，请稍后重试",
+      "unknown": "未知错误"
+    },
+    "abort": {
+      "already_configured": "该户号已添加",
+      "reauth_successful": "重新认证成功"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "蒙自城镇供水选项",
+        "description": "设置数据轮询间隔（最低 5 分钟）。",
+        "data": {
+          "scan_interval": "轮询间隔（秒）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "balance": { "name": "预存金额" },
+      "arrears": { "name": "待缴欠费合计" },
+      "pending_bills": { "name": "待缴账单数" },
+      "last_payment_time": { "name": "最近缴费时间" },
+      "stop_status": { "name": "供水状态" },
+      "customer_no": { "name": "户号" },
+      "customer_name": { "name": "户名" },
+      "address": { "name": "用址" },
+      "meter_count": { "name": "水表数" },
+      "water_use_type": { "name": "用水类型" },
+      "book_name": { "name": "册名" },
+      "last_update": { "name": "最近更新" }
+    }
+  }
+}

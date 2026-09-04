@@ -1,0 +1,57 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configure Mengzi Water",
+        "description": "Paste the session Cookie from the online service hall (after WeChat login, capture any request header via a proxy and copy the Cookie value starting with Ares.Core.Session.JXSWPHALL=).\n\nThe cookie is stored only in this HA instance.",
+        "data": {
+          "session_cookie": "Session Cookie",
+          "name": "Name (optional)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "Session expired. Capture a fresh Cookie and paste it here.",
+        "data": {
+          "session_cookie": "Session Cookie"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Session cookie is invalid or expired",
+      "cannot_connect": "Cannot connect to the server",
+      "unknown": "Unknown error"
+    },
+    "abort": {
+      "already_configured": "This customer number is already configured",
+      "reauth_successful": "Re-authentication successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Mengzi Water options",
+        "description": "Set the polling interval (minimum 5 minutes).",
+        "data": {
+          "scan_interval": "Polling interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "balance": { "name": "Prepaid balance" },
+      "arrears": { "name": "Total arrears" },
+      "pending_bills": { "name": "Unpaid bills" },
+      "last_payment_time": { "name": "Last payment time" },
+      "stop_status": { "name": "Water supply status" },
+      "customer_no": { "name": "Customer number" },
+      "customer_name": { "name": "Customer name" },
+      "address": { "name": "Address" },
+      "meter_count": { "name": "Meters" },
+      "water_use_type": { "name": "Water use type" },
+      "book_name": { "name": "Book" },
+      "last_update": { "name": "Last update" }
+    }
+  }
+}

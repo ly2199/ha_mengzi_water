@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Editors / tools
+.idea/
+.vscode/
+.qoder/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / 本地测试
+*.log
+*_test_cookie*
