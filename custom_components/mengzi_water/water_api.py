@@ -19,6 +19,7 @@ from .protocol import (
     build_payload,
     build_query,
     extract_relations,
+    extract_session_cookie,
     page_param,
     parse_article,
     single_param,
@@ -38,15 +39,6 @@ _LOGGER = logging.getLogger(__name__)
 __all__ = ["MengziWaterApi", "MengziWaterError", "AuthExpired", "Household"]
 
 _COOKIE_PREFIX = COOKIE_NAME + "="
-
-
-def extract_session_cookie(set_cookies: list[str]) -> str | None:
-    """从 Set-Cookie 列表里取出会话 Cookie 值(原样保留 URL 编码)。"""
-    for raw in set_cookies:
-        first = raw.split(";", 1)[0].strip()
-        if first.startswith(_COOKIE_PREFIX):
-            return first
-    return None
 
 
 class MengziWaterApi:

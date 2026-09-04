@@ -397,6 +397,19 @@ def apply_payload(h: Household, rd: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Cookie 辅助
+# ---------------------------------------------------------------------------
+
+def extract_session_cookie(set_cookies: list[str], prefix: str = "Ares.Core.Session.JXSWPHALL=") -> str | None:
+    """从 Set-Cookie 列表里取出会话 Cookie 的 名=值(原样保留 URL 编码)。"""
+    for raw in set_cookies:
+        first = str(raw).split(";", 1)[0].strip()
+        if first.startswith(prefix):
+            return first
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 阶梯价目(水价公示解析)
 # ---------------------------------------------------------------------------
 
