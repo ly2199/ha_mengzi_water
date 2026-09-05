@@ -3,19 +3,19 @@
     "step": {
       "user": {
         "title": "配置蒙自城镇供水",
-        "description": "粘贴网上营业厅登录会话 Cookie（可选填一个备注名称）。\n\n获取方法：手机微信打开 https://swp.mzczgs.com/Hall/ 完成登录后，通过抓包代理（mitmproxy/Charles 等）抓任意一个请求，复制请求头中的 Cookie 值（以 Ares.Core.Session.JXSWPHALL= 开头）。\n\nCookie 仅保存在本机 HA 配置中，不会上传到任何第三方。\n\nopenId 获取：微信登录后抓包找 Fun=HallEx.Login 的请求，Params 第一个参数值。",
+        "description": "粘贴网上营业厅会话 Cookie（可留空）；推荐同时填写 openId，之后 Cookie 过期会自动登录续期。\n\nopenId 获取：手机微信打开营业厅完成登录后，抓包搜索 openId（HallEx.Authorize 响应 Data.openId，形如 o 开头约28位）。",
         "data": {
-          "session_cookie": "会话 Cookie",
+          "session_cookie": "会话 Cookie（可留空，填 openId 时自动获取）",
           "name": "名称（可选）",
-          "open_id": "微信 openId（选填，用于会话过期自动重登）"
+          "open_id": "微信 openId（推荐）"
         }
       },
       "reauth_confirm": {
         "title": "重新认证",
-        "description": "会话已失效，请重新抓取最新的 Cookie 粘贴到这里。",
+        "description": "会话已失效。Cookie 可留空，只要填写/保留 openId 就会自动登录并保存新会话。",
         "data": {
-          "session_cookie": "会话 Cookie",
-          "open_id": "微信 openId（选填，用于会话过期自动重登）"
+          "session_cookie": "会话 Cookie（可留空，填 openId 时自动获取）",
+          "open_id": "微信 openId（推荐）"
         }
       }
     },

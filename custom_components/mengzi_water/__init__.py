@@ -69,7 +69,7 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
         )
 
     async def _keepalive(self) -> bool:
-        """用 openId 调登录接口刷新服务端活跃状态(保活)。"""
+        """用 openId 调登录接口刷新服务端活跃状态(保活),并把新会话持久化。"""
         import time as _time
 
         open_id = self.open_id
@@ -79,6 +79,8 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
         if ok:
             self._last_keepalive_ts = _time.time()
             self._renewed_in_cycle = True
+            # 服务端会签发新会话 Cookie:立即写入配置,重启后仍有效
+            await self._persist_cookie(self._api.cookie)
         return ok
 
     async def _maybe_keepalive(self) -> None:

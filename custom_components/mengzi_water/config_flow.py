@@ -17,12 +17,13 @@ from .water_api import AuthExpired, MengziWaterApi, MengziWaterError
 _LOGGER = logging.getLogger(__name__)
 
 OPEN_ID_HINT = (
-    "openId 获取方法(选填,用于 Cookie 过期后自动重登):手机微信打开营业厅并完成登录后,"
-    "用抓包代理找到 Fun=HallEx.Login 的请求,其 Params 第一个参数值即为 openId。"
+    "openId 获取方法:手机微信打开营业厅完成登录后,抓包搜索 openId "
+    "(HallEx.Authorize 响应 Data.openId,形如 o 开头约 28 位)。"
+    "填了 openId 后,Cookie 可留空 —— 集成会自动登录并保存新会话。"
 )
 
 SCHEMA_USER = vol.Schema({
-    vol.Required(CONF_COOKIE): str,
+    vol.Optional(CONF_COOKIE, default=""): str,
     vol.Optional(CONF_OPENID, default=""): str,
     vol.Optional(CONF_NAME, default=""): str,
 })
@@ -45,14 +46,39 @@ def _normalize_cookie(raw: str) -> str:
     return value
 
 
-async def _validate(hass: HomeAssistant, cookie: str) -> str:
+async def _resolve_session(hass: HomeAssistant, cookie_raw: str, open_id: str) -> tuple[str, str]:
+    """返回 (最终Cookie, 户号信息)。
+
+    优先用提供的 Cookie;Cookie 无效/为空且给了 openId 时,自动用 openId
+    登录换取新会话 Cookie(实测服务端会签发新 Cookie)。
+    """
+    cookie = _normalize_cookie(cookie_raw) if cookie_raw.strip() else ""
     api = MengziWaterApi(hass, cookie)
+    if cookie:
+        try:
+            info = await api.validate_session()
+            return api.cookie, info
+        except AuthExpired:
+            pass  # Cookie 失效,尝试 openId 登录
+        except MengziWaterError as err:
+            raise CannotConnect(str(err)) from err
+
+    open_id = open_id.strip()
+    if not open_id:
+        raise InvalidAuth("Cookie 无效或已过期,且未填写 openId")
     try:
-        return await api.validate_session()
-    except AuthExpired as err:
-        raise InvalidAuth("会话已失效或已过期") from err
+        new_cookie = await api.login_with_openid(open_id)
     except MengziWaterError as err:
         raise CannotConnect(str(err)) from err
+    if not new_cookie:
+        raise InvalidAuth("openId 登录未取得新会话,请检查 openId 是否正确")
+    try:
+        info = await api.validate_session()
+    except AuthExpired as err:
+        raise InvalidAuth("openId 登录后会话仍不可用,请检查 openId") from err
+    except MengziWaterError as err:
+        raise CannotConnect(str(err)) from err
+    return new_cookie, info
 
 
 class MengziWaterConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -65,9 +91,11 @@ class MengziWaterConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            cookie = _normalize_cookie(user_input[CONF_COOKIE])
+            open_id = str(user_input.get(CONF_OPENID) or "").strip()
             try:
-                info = await _validate(self.hass, cookie)
+                cookie, info = await _resolve_session(
+                    self.hass, str(user_input.get(CONF_COOKIE) or ""), open_id
+                )
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except CannotConnect:
@@ -77,8 +105,8 @@ class MengziWaterConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(f"{DOMAIN}-{title}")
                 self._abort_if_unique_id_configured()
                 data = {CONF_COOKIE: cookie}
-                if user_input.get(CONF_OPENID):
-                    data[CONF_OPENID] = str(user_input[CONF_OPENID]).strip()
+                if open_id:
+                    data[CONF_OPENID] = open_id
                 return self.async_create_entry(title=title, data=data)
 
         return self.async_show_form(
@@ -99,12 +127,13 @@ class MengziWaterConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         entry = self._get_reauth_entry()
         if user_input is not None:
-            cookie = _normalize_cookie(user_input[CONF_COOKIE])
             openid = str(user_input.get(CONF_OPENID) or "").strip() or str(
                 entry.data.get(CONF_OPENID) or ""
             ).strip()
             try:
-                await _validate(self.hass, cookie)
+                cookie, _info = await _resolve_session(
+                    self.hass, str(user_input.get(CONF_COOKIE) or ""), openid
+                )
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
             except CannotConnect:
@@ -120,7 +149,7 @@ class MengziWaterConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="reauth_successful")
 
         schema = vol.Schema({
-            vol.Required(CONF_COOKIE): str,
+            vol.Optional(CONF_COOKIE, default=str(entry.data.get(CONF_COOKIE) or "")): str,
             vol.Optional(CONF_OPENID, default=str(entry.data.get(CONF_OPENID) or "")): str,
         })
         return self.async_show_form(

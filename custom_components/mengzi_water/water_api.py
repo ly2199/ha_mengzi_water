@@ -62,6 +62,21 @@ class MengziWaterApi:
         if cookie:
             self._cookie = cookie.strip()
 
+    @property
+    def cookie(self) -> str:
+        return self._cookie
+
+    async def login_with_openid(self, open_id: str) -> str | None:
+        """仅用 openId 登录,返回服务端**新签发**的会话 Cookie(未签发则 None)。"""
+        before = self._cookie
+        ok = await self.renew_session_with_openid(open_id)
+        if not ok:
+            return None
+        after = self._cookie
+        if after and after != before:
+            return after
+        return None
+
     async def _absorb_set_cookie(self, resp) -> None:
         """服务端回发 Set-Cookie 时(滑动续期),吸收并持久化。"""
         try:
