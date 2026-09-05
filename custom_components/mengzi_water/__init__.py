@@ -65,7 +65,7 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
         """启动保活循环:立即报到一次,之后每 KEEPALIVE_INTERVAL 一次。"""
         if self._keepalive_task is not None or not self.open_id:
             return
-        self._keepalive_task = self.hass.asyncio.create_task(self._keepalive_loop())
+        self._keepalive_task = self.hass.async_create_task(self._keepalive_loop())
         _LOGGER.info("openId 会话保活任务已启动(每 %s 秒报到一次)", KEEPALIVE_INTERVAL)
 
     async def _keepalive_loop(self) -> None:
@@ -175,7 +175,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-    coordinator.start_keepalive()
+    try:
+        coordinator.start_keepalive()
+    except Exception as err:  # noqa: BLE001
+        # 保活任务启动失败不应影响集成本身
+        _LOGGER.warning("会话保活任务启动失败(不影响数据轮询): %s", err)
     return True
 
 
