@@ -1,6 +1,7 @@
 """蒙自城镇供水 (Mengzi Water) 集成入口。"""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import timedelta
 from typing import Any
@@ -27,7 +28,7 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
 class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
-    """轮询所有绑定户号数据,并用 openId 定时保活会话(可选)。"""
+    """轮询所有绑定户号数据;openId 会话保活由独立常驻任务负责,不依赖轮询周期。"""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, api: MengziWaterApi) -> None:
         interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
@@ -41,8 +42,7 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
         self._entry = entry
         self._options_snapshot = dict(entry.options)
         self.price_standard: dict = {}
-        self._renewed_in_cycle = False
-        self._last_keepalive_ts = 0.0
+        self._keepalive_task: asyncio.Task | None = None
 
     @property
     def api(self) -> MengziWaterApi:
@@ -58,6 +58,43 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
     def remember_options(self) -> None:
         self._options_snapshot = dict(self._entry.options)
 
+    # ------------------------------------------------------------------
+    # 会话保活(独立常驻任务)
+    # ------------------------------------------------------------------
+    def start_keepalive(self) -> None:
+        """启动保活循环:立即报到一次,之后每 KEEPALIVE_INTERVAL 一次。"""
+        if self._keepalive_task is not None or not self.open_id:
+            return
+        self._keepalive_task = self.hass.asyncio.create_task(self._keepalive_loop())
+        _LOGGER.info("openId 会话保活任务已启动(每 %s 秒报到一次)", KEEPALIVE_INTERVAL)
+
+    async def _keepalive_loop(self) -> None:
+        while True:
+            try:
+                await self._keepalive()
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("会话保活异常: %s", err)
+            try:
+                await asyncio.sleep(KEEPALIVE_INTERVAL)
+            except asyncio.CancelledError:
+                raise
+
+    async def _keepalive(self) -> bool:
+        """用 openId 调登录接口刷新服务端活跃状态,并把新会话持久化。"""
+        open_id = self.open_id
+        if not open_id:
+            return False
+        ok = await self._api.renew_session_with_openid(open_id)
+        if ok:
+            # 服务端会签发新会话 Cookie:立即写入配置,重启后仍有效
+            await self._persist_cookie(self._api.cookie)
+            _LOGGER.debug("会话保活成功")
+        else:
+            _LOGGER.warning("会话保活失败(openId 无效或网络异常),将在下个周期重试")
+        return ok
+
     async def _persist_cookie(self, cookie: str) -> None:
         """把服务端轮换的新 Cookie 写入配置条目(仅数据更新,不触发整体重载)。"""
         old = str(self._entry.data.get(CONF_COOKIE) or "")
@@ -68,43 +105,19 @@ class MengziWaterCoordinator(DataUpdateCoordinator[dict[str, Household]]):
             self._entry, data={**self._entry.data, CONF_COOKIE: cookie}
         )
 
-    async def _keepalive(self) -> bool:
-        """用 openId 调登录接口刷新服务端活跃状态(保活),并把新会话持久化。"""
-        import time as _time
+    def cancel_keepalive(self) -> None:
+        if self._keepalive_task is not None:
+            self._keepalive_task.cancel()
+            self._keepalive_task = None
 
-        open_id = self.open_id
-        if not open_id:
-            return False
-        ok = await self._api.renew_session_with_openid(open_id)
-        if ok:
-            self._last_keepalive_ts = _time.time()
-            self._renewed_in_cycle = True
-            # 服务端会签发新会话 Cookie:立即写入配置,重启后仍有效
-            await self._persist_cookie(self._api.cookie)
-        return ok
-
-    async def _maybe_keepalive(self) -> None:
-        """周期保活:距离上次保活超过阈值则主动报到(默认 50 分钟)。"""
-        import time as _time
-
-        if not self.open_id or self._renewed_in_cycle:
-            return
-        if _time.time() - self._last_keepalive_ts >= KEEPALIVE_INTERVAL:
-            if not await self._keepalive():
-                _LOGGER.warning("周期保活失败(将尝试正常拉取,失败再触发重登)")
-
+    # ------------------------------------------------------------------
+    # 数据轮询
+    # ------------------------------------------------------------------
     async def _async_update_data(self) -> dict[str, Household]:
-        import time as _time
-
-        self._renewed_in_cycle = False
-        if not self._last_keepalive_ts:
-            self._last_keepalive_ts = _time.time()
-
-        await self._maybe_keepalive()
         try:
             households = await self._api.fetch_all()
         except AuthExpired:
-            # 拉取确认为会话失效:先保活一次再重试
+            # 拉取确认为会话失效:立即保活一次再重试
             if await self._keepalive():
                 try:
                     households = await self._api.fetch_all()
@@ -148,13 +161,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         on_cookie_renewed=_make_cookie_persister(hass, entry),
     )
     coordinator = MengziWaterCoordinator(hass, entry, api)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryAuthFailed:
+        # 重启时存储的 Cookie 可能已失效:有 openId 就先保活换新会话再试一次
+        if coordinator.open_id and await coordinator._keepalive():
+            await coordinator.async_config_entry_first_refresh()
+        else:
+            raise
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    coordinator.start_keepalive()
     return True
 
 
@@ -182,6 +203,11 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    coordinator: MengziWaterCoordinator | None = hass.data.get(DOMAIN, {}).get(
+        entry.entry_id
+    )
+    if coordinator is not None:
+        coordinator.cancel_keepalive()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data.setdefault(DOMAIN, {}).pop(entry.entry_id, None)
